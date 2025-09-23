@@ -172,9 +172,7 @@ def train(args):
     
     # Enable mask decoder parameters - explicitly set to trainable
     for param in sam.mask_decoder.parameters():
-        #######################################################################################
         param.requires_grad = True
-        #######################################################################################
     
     # Count and log parameters after freezing
     total_params, trainable_params = count_parameters(sam)
@@ -255,7 +253,17 @@ def train(args):
     
     
     best_f1_score = 0.0
-    
+    # zero_prompt
+    sparse_embeddings = torch.zeros(
+    (args.batch_size, 0, 256),
+    dtype=torch.float,
+    device="cuda"
+    )
+    dense_embeddings = torch.zeros(
+        (args.batch_size, 256, 64, 64),
+        dtype=torch.float,
+        device="cuda"
+    )
     for epoch in range(args.epochs):
         sam.train()
         train_loss = 0.0
@@ -277,11 +285,13 @@ def train(args):
                 image_embeddings, encoder_features = encoder_output
                 adapter_features = None
             
-            sparse_embeddings, dense_embeddings = sam.prompt_encoder(
-                points=None,
-                boxes=None,
-                masks=None
-            )
+            # sparse_embeddings, dense_embeddings = sam.prompt_encoder(
+            #     points=None,
+            #     boxes=None,
+            #     masks=None
+            # )
+            # print(f"sparse_embeddings{sparse_embeddings.shape}")
+            # print(f"dense_embeddings{dense_embeddings.shape}")
             low_res_masks, iou_predictions = sam.mask_decoder(
                 image_embeddings=image_embeddings,
                 image_pe=sam.prompt_encoder.get_dense_pe(),
@@ -337,11 +347,11 @@ def train(args):
                         image_embeddings, encoder_features = encoder_output
                         adapter_features = None
                     
-                    sparse_embeddings, dense_embeddings = sam.prompt_encoder(
-                        points=None,
-                        boxes=None,
-                        masks=None
-                    )
+                    # sparse_embeddings, dense_embeddings = sam.prompt_encoder(
+                    #     points=None,
+                    #     boxes=None,
+                    #     masks=None
+                    # )
                     low_res_masks, iou_predictions = sam.mask_decoder(
                         image_embeddings=image_embeddings,
                         image_pe=sam.prompt_encoder.get_dense_pe(),
@@ -402,8 +412,8 @@ if __name__ == '__main__':
     parser.add_argument('--checkpoint', type=str, default='/hy-tmp/sam/sam_pth/sam_vit_l_0b3195.pth', help='Path to SAM checkpoint')
     parser.add_argument('--batch_size', type=int, default=1, help='Batch size')
     parser.add_argument('--adapter_dim_ratio', type=float, default=0.1, help='Ratio of adapter dimension to model dimension')
-    parser.add_argument('--adapter_lr', type=float, default=1e-4, help='Learning rate for adapter modules')
-    parser.add_argument('--decoder_lr', type=float, default=1e-4, help='Learning rate for mask decoder')
+    parser.add_argument('--adapter_lr', type=float, default=3e-4, help='Learning rate for adapter modules')
+    parser.add_argument('--decoder_lr', type=float, default=3e-4, help='Learning rate for mask decoder')
     parser.add_argument('--weight_decay', type=float, default=0.01, help='Weight decay for optimizer')
     parser.add_argument('--epochs', type=int, default=40, help='Number of epochs')
     parser.add_argument('--val_interval', type=int, default=1, help='Validation interval (epochs)')

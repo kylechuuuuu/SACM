@@ -9,7 +9,7 @@ import numpy as np
 from segment_anything import build_sam_vit_l
 import logging
 from datetime import datetime
-from sklearn.metrics import f1_score, precision_score, recall_score
+from sklearn.metrics import f1_score
 import matplotlib.pyplot as plt
 import argparse
 from tqdm import tqdm
@@ -48,17 +48,6 @@ def calculate_f1_score(pred_masks, true_masks, threshold=0.5):
     
     # Calculate F1 score
     return f1_score(true_masks, pred_masks)
-
-def calculate_precision_recall(pred_masks, true_masks, threshold=0.5):
-    pred_masks = pred_masks.detach().cpu().numpy()
-    true_masks = true_masks.detach().cpu().numpy()
-    pred_masks = (pred_masks > threshold).astype(np.uint8)
-    true_masks = (true_masks > threshold).astype(np.uint8)
-    pred_masks = pred_masks.reshape(-1)
-    true_masks = true_masks.reshape(-1)
-    precision = precision_score(true_masks, pred_masks, zero_division=0)
-    recall = recall_score(true_masks, pred_masks, zero_division=0)
-    return precision, recall
 
 class DiceLoss(nn.Module):
     def __init__(self, smooth=1e-6):
@@ -226,13 +215,21 @@ def test(args):
     
     sam.eval()
     f1_scores = []
-    precision_scores = []
-    recall_scores = []
     loss_values = []
     
     # Create progress bar for testing
     test_pbar = tqdm(val_loader, total=len(val_loader), desc="Testing")
-    
+        # zero_prompt
+    sparse_embeddings = torch.zeros(
+    (1, 0, 256),
+    dtype=torch.float,
+    device="cuda"
+    )
+    dense_embeddings = torch.zeros(
+        (1, 256, 64, 64),
+        dtype=torch.float,
+        device="cuda"
+    )
     with torch.no_grad():
         for model_input, original_mask, original_size, img_name in test_pbar:
             model_input = model_input.to(device)
@@ -246,11 +243,11 @@ def test(args):
                 image_embeddings, encoder_features = encoder_output
                 adapter_features = None
             
-            sparse_embeddings, dense_embeddings = sam.prompt_encoder(
-                points=None,
-                boxes=None,
-                masks=None
-            )
+            # sparse_embeddings, dense_embeddings = sam.prompt_encoder(
+            #     points=None,
+            #     boxes=None,
+            #     masks=None
+            # )
             low_res_masks, iou_predictions = sam.mask_decoder(
                 image_embeddings=image_embeddings,
                 image_pe=sam.prompt_encoder.get_dense_pe(),
@@ -268,12 +265,11 @@ def test(args):
             loss_values.append(loss.item())
             
             f1 = calculate_f1_score(low_res_masks, original_mask)
-            precision, recall = calculate_precision_recall(low_res_masks, original_mask)
             f1_scores.append(f1)
-            precision_scores.append(precision)
-            recall_scores.append(recall)
-            # Update progress bar with current F1 score, precision, recall, and loss
-            test_pbar.set_postfix({'F1': f'{f1:.4f}', 'Precision': f'{precision:.4f}', 'Recall': f'{recall:.4f}', 'Loss': f'{loss.item():.4f}'})
+            
+            # Update progress bar with current F1 score and loss
+            test_pbar.set_postfix({'F1': f'{f1:.4f}', 'Loss': f'{loss.item():.4f}'})
+            
             # Save prediction visualization
             pred_mask = (low_res_masks[0, 0] > 0.5).cpu().numpy().astype(np.uint8) * 255
             
@@ -293,25 +289,22 @@ def test(args):
                        dpi=100)
             plt.close()
             
-            logging.info(f"Image: {img_name[0]}, F1 Score: {f1:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, Loss: {loss.item():.4f}")
+            logging.info(f"Image: {img_name[0]}, F1 Score: {f1:.4f}, Loss: {loss.item():.4f}")
     
     # Calculate and log average F1 score and loss
     avg_f1 = np.mean(f1_scores)
     std_f1 = np.std(f1_scores)
-    avg_precision = np.mean(precision_scores)
-    avg_recall = np.mean(recall_scores)
     avg_loss = np.mean(loss_values)
+    
     logging.info(f"Average F1 Score: {avg_f1:.4f}")
     logging.info(f"F1 Score Std: {std_f1:.4f}")
-    logging.info(f"Average Precision: {avg_precision:.4f}")
-    logging.info(f"Average Recall: {avg_recall:.4f}")
     logging.info(f"Average Loss: {avg_loss:.4f}")
+    
     print(f"\nTest Results:")
     print(f"Average F1 Score: {avg_f1:.4f}")
     print(f"F1 Score Std: {std_f1:.4f}")
-    print(f"Average Precision: {avg_precision:.4f}")
-    print(f"Average Recall: {avg_recall:.4f}")
     print(f"Average Loss: {avg_loss:.4f}")
+    
     # Save summary results
     with open(os.path.join(args.output_dir, 'results_summary.txt'), 'w') as f:
         f.write(f"Model: {args.trained_weights}\n")
@@ -319,18 +312,16 @@ def test(args):
         f.write(f"Num Samples: {len(val_dataset)}\n")
         f.write(f"Average F1 Score: {avg_f1:.4f}\n")
         f.write(f"F1 Score Std: {std_f1:.4f}\n")
-        f.write(f"Average Precision: {avg_precision:.4f}\n")
-        f.write(f"Average Recall: {avg_recall:.4f}\n")
         f.write(f"Average Loss: {avg_loss:.4f}\n")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Test trained SAM model')
     parser.add_argument('--data_root', type=str, default='/hy-tmp/sam/datasets/wiree', help='Path to dataset root directory')
     parser.add_argument('--trained_weights', type=str, default='best_model.pth', help='Path to trained weights')
-    parser.add_argument('--output_dir', type=str, default='test_results/FIVES', help='Directory to save test results')
+    parser.add_argument('--output_dir', type=str, default='test_results', help='Directory to save test results')
     parser.add_argument('--adapter_dim_ratio', type=float, default=0.1, help='Ratio of adapter dimension to model dimension')
-    parser.add_argument('--bce_weight', type=float, default=0.5, help='Weight for BCE loss in combined loss')
-    parser.add_argument('--dice_weight', type=float, default=0.5, help='Weight for Dice loss in combined loss')
+    parser.add_argument('--bce_weight', type=float, default=0.7, help='Weight for BCE loss in combined loss')
+    parser.add_argument('--dice_weight', type=float, default=0.3, help='Weight for Dice loss in combined loss')
     
     args = parser.parse_args()
-    test(args)
+    test(args) 
