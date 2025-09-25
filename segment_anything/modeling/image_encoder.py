@@ -162,7 +162,6 @@ class ImageEncoderViT(nn.Module):
                 # Directly add the adapter output to the main branch
                 # This simplifies the flow and reduces potential errors
                 x = x + external_adapter_out
-                #####################################################################################################################
 
         # Apply neck to get final output
         output = self.neck(x.permute(0, 3, 1, 2))
@@ -275,16 +274,17 @@ class Block(nn.Module):
 
         x = shortcut + x
         
-        # MLP block with adapter in residual path
-        mlp_output = self.mlp(self.norm2(x))
-        
+        # --- MLP + Adapter block ---
+        residual = x
+        x = self.norm2(x)
+        mlp_out = self.mlp(x)
+    
         if self.use_adapter:
-            # Add adapter output to the MLP path
-            adapter_output = self.adapter(self.norm2(x))
-            x = x + mlp_output + adapter_output
+            adapter_out = self.adapter(x)
+            x = residual + mlp_out + adapter_out
         else:
-            x = x + mlp_output
-
+            x = residual + mlp_out
+    
         return x
 
 
