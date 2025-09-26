@@ -139,7 +139,7 @@ class ImageEncoderViT(nn.Module):
 
         # Initialize containers
         intermediate_features = []
-        adapter_features = []  # 收集所有external adapter的输出
+        adapter_features = []  # collect external adapter output
             
         # Process through blocks
         for i, blk in enumerate(self.blocks):
@@ -156,7 +156,6 @@ class ImageEncoderViT(nn.Module):
                 # Apply external adapter to normalized input
                 external_adapter_out = self.external_adapters[i](self.adapter_norm(x))
                 
-                # 收集adapter输出用于跳跃连接
                 adapter_features.append(external_adapter_out)
                 
                 # Directly add the adapter output to the main branch
@@ -280,7 +279,7 @@ class Block(nn.Module):
         mlp_out = self.mlp(x)
     
         if self.use_adapter:
-            adapter_out = self.adapter(x)
+            adapter_out = self.adapter(residual)
             x = residual + mlp_out + adapter_out
         else:
             x = residual + mlp_out
