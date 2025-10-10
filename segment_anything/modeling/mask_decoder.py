@@ -62,14 +62,27 @@ class MaskDecoder(nn.Module):
             nn.ConvTranspose2d(transformer_dim // 4, transformer_dim // 8, kernel_size=2, stride=2),
             activation(),
         )
+        # Stage-1 hypernetworks (initial masks)
         self.output_hypernetworks_mlps = nn.ModuleList(
             [
                 MLP(transformer_dim, transformer_dim, transformer_dim // 8, 3)
                 for i in range(self.num_mask_tokens)
             ]
         )
+        # Stage-2 hypernetworks (refined masks)
+        self.output_hypernetworks_mlps_stage2 = nn.ModuleList(
+            [
+                MLP(transformer_dim, transformer_dim, transformer_dim // 8, 3)
+                for i in range(self.num_mask_tokens)
+            ]
+        )
 
+        # IoU / quality prediction head (for each head)
         self.iou_prediction_head = MLP(
+            transformer_dim, iou_head_hidden_dim, self.num_mask_tokens, iou_head_depth
+        )
+        # Gating head to select/refine the best head in Stage-2
+        self.gating_mlp = MLP(
             transformer_dim, iou_head_hidden_dim, self.num_mask_tokens, iou_head_depth
         )
         
@@ -182,18 +195,40 @@ class MaskDecoder(nn.Module):
                 )
             
             upscaled_embedding = upscaled_embedding + processed_adapter
-            #####################################################################################################################
+            print('loveeeeeeeeeeeeeeeeeee', upscaled_embedding.shape)
         
-        hyper_in_list: List[torch.Tensor] = []
+        # --------------------- Stage 1: initial masks ---------------------
+        hyper_in_list_stage1: List[torch.Tensor] = []
         for i in range(self.num_mask_tokens):
-            hyper_in_list.append(self.output_hypernetworks_mlps[i](mask_tokens_out[:, i, :]))
-        hyper_in = torch.stack(hyper_in_list, dim=1)
+            hyper_in_list_stage1.append(self.output_hypernetworks_mlps[i](mask_tokens_out[:, i, :]))
+        hyper_in_stage1 = torch.stack(hyper_in_list_stage1, dim=1)
         b, c, h, w = upscaled_embedding.shape
-        masks = (hyper_in @ upscaled_embedding.view(b, c, h * w)).view(b, -1, h, w)
+        masks_stage1 = (hyper_in_stage1 @ upscaled_embedding.view(b, c, h * w)).view(b, -1, h, w)
 
+        # Compute gating scores to select best heads using Stage-1 spatial responses
+        gating_scores = masks_stage1.view(b, self.num_mask_tokens, -1).max(dim=-1).values
+        gating_weights = F.softmax(gating_scores, dim=1)
+        
+        # Order heads by gating score (descending), used in Stage-2 output ordering
+        sorted_indices = torch.argsort(gating_weights, dim=1, descending=True)
+        
+        # --------------------- Stage 2: refined masks ---------------------
+        hyper_in_list_stage2: List[torch.Tensor] = []
+        for i in range(self.num_mask_tokens):
+            hyper_in_list_stage2.append(self.output_hypernetworks_mlps_stage2[i](mask_tokens_out[:, i, :]))
+        hyper_in_stage2 = torch.stack(hyper_in_list_stage2, dim=1)
+        masks_stage2_all = (hyper_in_stage2 @ upscaled_embedding.view(b, c, h * w)).view(b, -1, h, w)
+        
+        # Reorder masks by gating scores so that index-0 is the best mask
+        gather_indices = sorted_indices.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, h, w)
+        masks_stage2_ordered = torch.gather(masks_stage2_all, 1, gather_indices)
+
+        # IoU prediction head and reorder by the same indices
         iou_pred = self.iou_prediction_head(iou_token_out)
+        iou_pred_ordered = torch.gather(iou_pred, 1, sorted_indices)
+        print()
 
-        return masks, iou_pred
+        return masks_stage2_ordered, iou_pred_ordered
 
 
 # Lightly adapted from
