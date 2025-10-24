@@ -144,7 +144,8 @@ class ImageEncoderViT(nn.Module):
         # Process through blocks
         for i, blk in enumerate(self.blocks):
             # Process through block
-            x = blk(x)
+
+            blk_out = blk(x)
             
             # Save intermediate features for skip connections
             # Save at specific layers for skip connections - beginning, 1/3, 2/3, and end of network
@@ -160,7 +161,8 @@ class ImageEncoderViT(nn.Module):
                 
                 # Directly add the adapter output to the main branch
                 # This simplifies the flow and reduces potential errors
-                x = x + external_adapter_out
+
+                x = blk_out + external_adapter_out
 
         # Apply neck to get final output
         output = self.neck(x.permute(0, 3, 1, 2))
