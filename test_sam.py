@@ -169,7 +169,7 @@ def test(args):
     # Setup logging
     setup_logging()
     
-    device = torch.device('cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logging.info(f"Using device: {device}")
     
     # Log test configuration
